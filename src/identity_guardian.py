@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 
 import botocore.exceptions
 
@@ -63,31 +64,46 @@ class IdentityGuardian:
         return orphans
 
     def export_identity_contract(
-        self, output_path: str = "infra/local_test/identity_contract.auto.tfvars.json"
+        self, output_path: str = "infra/local_test/europa_contract.auto.tfvars.json"
     ) -> None:
-        """Exports ephemeral IAM guardrails to Terraform variables."""
-        contract = {
-            "epoch_id": self.epoch_id,
-            "enforce_strict_scp": True,
-            "ephemeral_pipeline_policy": self.generate_ephemeral_role_policy(
-                "ci_pipeline"
-            ),
-            "quarantine_honeybucket": f"europa-canary-trap-{self.epoch_id}",
-        }
+        """Exports unified ephemeral IAM and topology guardrails to a single Terraform variables file."""
+
+        # Load topology file if it exists to merge them cleanly
+        topo_path = "infra/local_test/europa_contract.auto.tfvars.json"
+        contract = {}
+        if os.path.exists(topo_path):
+            with open(topo_path, "r", encoding="utf-8") as f:
+                contract = json.load(f)
+
+        # Update with identity contract properties
+        contract.update(
+            {
+                "epoch_id": self.epoch_id,
+                "enforce_strict_scp": True,
+                "ephemeral_pipeline_policy": self.generate_ephemeral_role_policy(
+                    "ci_pipeline"
+                ),
+                "quarantine_honeybucket": f"europa-canary-trap-{self.epoch_id}",
+            }
+        )
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(contract, f, indent=4)
 
         print(
-            f"[Identity Guardian] Epoch {self.epoch_id} identity guardrails compiled -> {output_path}"
+            f"[Identity Guardian] Epoch {self.epoch_id} unified guardrails compiled -> {output_path}"
         )
 
 
 if __name__ == "__main__":
     try:
+        # Align epoch calculation with europa_brain.py (27-minute sliding epoch window)
+        current_timestamp = time.time()
+        dynamic_epoch_id = int(current_timestamp // (27 * 60))
+
         guardian = IdentityGuardian(
-            epoch_id=17300000, master_salt="Europa_Master_Salt_Key_9921"
+            epoch_id=dynamic_epoch_id, master_salt="Europa_Master_Salt_Key_9921"
         )
         guardian.export_identity_contract()
     except botocore.exceptions.ClientError as err:
