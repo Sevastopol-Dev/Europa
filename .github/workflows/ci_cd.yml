@@ -93,8 +93,11 @@ jobs:
       - name: Generate Dynamic Pre-Flight Contracts
         run: |
           echo "::group::Generating Unified Pre-Flight State Contract"
-          python src/europa_brain.py
-          python src/identity_guardian.py
+          python -m pip install --upgrade pip
+          pip install boto3 botocore
+          chmod +x src/identity_guardian.py
+          python3 src/europa_brain.py
+          python3 src/identity_guardian.py
           echo "::endgroup::"
 
       # ==========================================
@@ -117,11 +120,12 @@ jobs:
           terraform show -json tfplan.binary > tfplan.json
           cd ../..
 
-          # Evaluate allow rule; explicitly assert that value equals true
-          OPA_ALLOW=$(opa eval --data policies/europa_identity_guard.rego --input infra/local_test/tfplan.json "data.europa.security.allow")
+          # Evaluate allow rule and extract the exact boolean value using jq
+          OPA_ALLOW=$(opa eval --format json --data policies/europa_identity_guard.rego --input infra/local_test/tfplan.json "data.europa.security.allow")
           echo "$OPA_ALLOW"
 
-          IS_ALLOWED=$(echo "$OPA_ALLOW" | grep -o 'true' | head -n 1)
+          IS_ALLOWED=$(echo "$OPA_ALLOW" | jq '.result[0].expressions[0].value')
+
           if [ "$IS_ALLOWED" != "true" ]; then
             echo "❌ OPA Guardrail Blocked Deployment: Temporal drift, missing epoch, or security violation detected!"
             exit 1
