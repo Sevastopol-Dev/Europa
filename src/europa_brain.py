@@ -39,21 +39,32 @@ def generate_europa_topology(parent_cidr, master_salt, epoch, roles):
             f"Allocated CIDRs contain duplicates: {allocations}"
         )
 
-    # 6. Export state contract directly for Terraform local_test folder
-    output_path = "infra/local_test/europa_topology.auto.tfvars.json"
+    # 6. Export state contract directly into a unified contract file for Terraform local_test folder
+    output_path = "infra/local_test/europa_contract.auto.tfvars.json"
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    tf_payload = {
-        "epoch_id": int(epoch),
-        "active_color": active_color,
-        "active_honeytoken_trap": f"eur_trap_{honeytoken_hash}",
-        "europa_active_topology": allocations,
-    }
+    # Load existing contract data if identity guardian already wrote its part
+    contract = {}
+    if os.path.exists(output_path):
+        try:
+            with open(output_path, "r", encoding="utf-8") as f:
+                contract = json.load(f)
+        except json.JSONDecodeError:
+            pass
+
+    contract.update(
+        {
+            "epoch_id": int(epoch),
+            "active_color": active_color,
+            "active_honeytoken_trap": f"eur_trap_{honeytoken_hash}",
+            "europa_active_topology": allocations,
+        }
+    )
 
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(tf_payload, f, indent=4)
+        json.dump(contract, f, indent=4)
 
-    return tf_payload
+    return contract
 
 
 # --- Execution ---
