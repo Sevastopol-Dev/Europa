@@ -1,0 +1,175 @@
+name: Project Europa DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ==========================================
+  # STAGE 1: PYTHON LINTING & SECURITY ANALYSIS
+  # ==========================================
+  python-devsecops:
+    name: Python Code & Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python DevSecOps Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff bandit
+
+      - name: Run Ruff Linter & Formatter Check
+        run: |
+          echo "::group::Ruff Code Quality Inspection"
+          ruff check src/
+          ruff format --check src/
+          echo "::endgroup::"
+
+      - name: Run Bandit SAST Security Scan
+        run: |
+          echo "::group::Bandit Static Application Security Testing"
+          bandit -r src/ -ll -ii
+          echo "::endgroup::"
+
+  # ==========================================
+  # STAGE 2: TERRAFORM LINTING & IAC SECURITY
+  # ==========================================
+  iac-devsecops:
+    name: Infrastructure-as-Code Security & Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform CLI
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: "v0.50.0"
+
+      - name: Set up Python for Contract Generation
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Terraform Format Check
+        run: |
+          echo "::group::Terraform Canonical Format Check"
+          terraform fmt -check -recursive infra/
+          echo "::endgroup::"
+
+      - name: Initialize & Run TFLint
+        run: |
+          echo "::group::TFLint Ruleset Execution"
+          tflint --init
+          tflint --chdir=infra/
+          echo "::endgroup::"
+
+      - name: Run Checkov IaC Security Scanner
+        run: |
+          echo "::group::Checkov Security & Compliance Analysis"
+          pip install checkov
+          checkov -d infra/ --framework terraform --compact --soft-fail
+          echo "::endgroup::"
+
+      - name: Generate Dynamic Pre-Flight Contracts
+        run: |
+          echo "::group::Generating Unified Pre-Flight State Contract"
+          python -m pip install --upgrade pip
+          pip install boto3 botocore
+          chmod +x src/identity_guardian.py
+          python3 src/europa_brain.py
+          python3 src/identity_guardian.py
+          echo "::endgroup::"
+
+      # ==========================================
+      # OPA POLICY-AS-CODE EVALUATION GATE
+      # ==========================================
+      - name: Setup Open Policy Agent (OPA)
+        run: |
+          echo "::group::Installing OPA Binary"
+          sudo curl -L -o /usr/local/bin/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64
+          sudo chmod +x /usr/local/bin/opa
+          opa version
+          echo "::endgroup::"
+
+      - name: Evaluate Terraform Plan against Rego Guardrails
+        run: |
+          echo "::group::OPA Policy-as-Code Temporal & Logical Audit"
+          cd infra/local_test
+          terraform init -backend=false
+          terraform plan -var-file="europa_contract.auto.tfvars.json" -out=tfplan.binary
+          terraform show -json tfplan.binary > tfplan.json
+          cd ../..
+
+          # Evaluate allow rule and extract the exact boolean value using jq
+          OPA_ALLOW=$(opa eval --format json --data policies/europa_identity_guard.rego --input infra/local_test/tfplan.json "data.europa.security.allow")
+          echo "$OPA_ALLOW"
+
+          IS_ALLOWED=$(echo "$OPA_ALLOW" | jq '.result[0].expressions[0].value')
+
+          if [ "$IS_ALLOWED" != "true" ]; then
+            echo "❌ OPA Guardrail Blocked Deployment: Temporal drift, missing epoch, or security violation detected!"
+            exit 1
+          else
+            echo "✅ OPA Policy-as-Code Verification Passed: Infrastructure contract is fully secure."
+          fi
+          echo "::endgroup::"
+      # ==========================================
+
+      - name: Terraform Validate
+        run: |
+          echo "::group::Terraform Provider & Configuration Validation"
+          cd infra/
+          terraform init -backend=false
+          terraform validate
+          echo "::endgroup::"
+
+  # ==========================================
+  # STAGE 3: SYNTHETIC DRY-RUN & PLAN
+  # ==========================================
+  terraform-plan:
+    name: Synthesized Dry-Run Plan
+    needs: [python-devsecops, iac-devsecops]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform CLI
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Synthesize Epoch State & Execute Plan
+        run: |
+          echo "::group::Dry-Run Pipeline Contract Execution"
+          python src/europa_brain.py
+          python src/identity_guardian.py
+          cd infra/local_test
+          terraform init -backend=false
+          terraform plan -var-file="europa_contract.auto.tfvars.json"
+          echo "::endgroup::"
