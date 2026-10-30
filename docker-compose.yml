@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  localstack:
+    container_name: europa_localstack
+    image: localstack/localstack:4.5.0
+    ports:
+    - "4566:4566"
+    environment:
+    - SERVICES=s3,iam,dynamodb,ec2,sts,kms
+    - DEBUG=0
+    healthcheck:
+      test: ["CMD", "curl", "-s", "http://localhost:4566/_localstack/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
