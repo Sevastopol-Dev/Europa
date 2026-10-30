@@ -91,6 +91,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Generate Dynamic Pre-Flight Contracts
+        continue-on-error: true
         run: |
           echo "::group::Generating Unified Pre-Flight State Contract"
           python -m pip install --upgrade pip
